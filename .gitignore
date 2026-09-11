@@ -13,7 +13,7 @@
 /prisma/db.sqlite-journal
 db.sqlite
 
-# next.js
+# next.js file
 /.next/
 /out/
 next-env.d.ts
