@@ -53,14 +53,14 @@ export const useEnhancedInventory = () => {
 
             // Store in IndexedDB for offline access
             await setInventory('inventory', basicInventory || []);
-            await setPriceList('priceList', enhancedInventory || []);
+            await setPriceList('priceList', enhancedInventory?.items || []);
             await setMetadata('metadata', new Date().toISOString());
 
-            console.log(`✅ Loaded ${enhancedInventory?.length || 0} enhanced inventory items`);
+            console.log(`✅ Loaded ${enhancedInventory?.items?.length || 0} enhanced inventory items`);
 
             return {
                 basic: basicInventory || [],
-                enhanced: enhancedInventory || []
+                enhanced: enhancedInventory?.items || []
             };
         },
         staleTime: 30 * 60 * 1000, // 30 minutes

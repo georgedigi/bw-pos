@@ -76,6 +76,8 @@ export const fetchItemDetails = async (stock_id?: string, kit?: string, forceRef
     console.log("Fetching item details from Endpoint");
 
     try {
+      // The scan result is the authoritative answer. Assign it immediately so a
+      // slow/failed catalogue refresh below can never discard it.
       const item_details = await fetch_item_details(
         site_url!,
         site_company!.company_prefix,
@@ -84,16 +86,22 @@ export const fetchItemDetails = async (stock_id?: string, kit?: string, forceRef
         kit!,
         undefined,
       );
-
-      // Handle response and store it in IndexedDB
-      const sellable = await fetch_all_sellable_items(site_company!, account!, site_url!);
-      const item_inventory = await fetch_all_item_inventory(site_company!, site_url!, account!, stock_id);
-
-      await setInventory("inventory", sellable || []);
-      await setPriceList("priceList", item_inventory?.items || []); 
-      await setMetadata("metadata", now.toISOString());
-
       details = item_details;
+
+      // Refresh the catalogue only when it is actually stale, and never let a
+      // failure here discard the scan above.
+      if (!lastUpdate || new Date(lastUpdate) <= thirtyAgo) {
+        try {
+          const sellable = await fetch_all_sellable_items(site_company!, account!, site_url!);
+          const item_inventory = await fetch_all_item_inventory(site_company!, site_url!, account!, stock_id);
+
+          await setInventory("inventory", sellable || []);
+          await setPriceList("priceList", item_inventory?.items || []);
+          await setMetadata("metadata", now.toISOString());
+        } catch (catalogueError) {
+          console.error("Catalogue refresh failed (non-fatal):", catalogueError);
+        }
+      }
     } catch (error) {
       console.error("Error fetching item details from API:", error);
       details = await getItemPriceDetails(stock_id!); // Fallback to IndexedDB on error
@@ -109,11 +117,9 @@ export const fetchItemDetails = async (stock_id?: string, kit?: string, forceRef
     if (itemDetails) {
       details = itemDetails;
     } else {
-      details = {
-        price: "0",
-        quantity_available: "0",
-        tax_mode: "0",
-      };
+      // Unknown to the cache is not the same as zero stock — let the caller
+      // distinguish "never checked" from "genuinely out of stock".
+      details = null;
     }
     return details;
   }

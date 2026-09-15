@@ -3,7 +3,7 @@ import { ScanBarcodeIcon, Loader2, SearchCodeIcon } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
-import { getEnhancedItemData, useInventory, useItemDetails } from "~/hooks/useInventory";
+import { fetchItemDetails, getEnhancedItemData, useInventory, useItemDetails } from "~/hooks/useInventory";
 import { useCartStore } from "~/store/cart-store";
 import { toast } from "sonner";
 import { useAuthStore } from "~/store/auth-store";
@@ -54,7 +54,7 @@ import { useEnhancedPaymentCalculations } from "~/hawk-tuah/components/enhancedA
 
 const ItemSearchBox = () => {
   const { addItemToPayments, validateAndAddPayment, paymentCarts, clearPaymentCarts } = usePayStore();
-  const { inventory, loading, error } = useInventory();
+  const { inventory, loading, error, refetch: refetchInventory } = useInventory();
   const { getItemWithDiscounts } = useEnhancedInventory();
   const { site_url, site_company, account, receipt_info } = useAuthStore.getState();
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
@@ -435,27 +435,82 @@ const ItemSearchBox = () => {
   useEffect(() => {
     const addItemWithEnhancement = async () => {
       if (item) {
-        if (details !== null && details !== undefined) {
-          if (details.quantity_available <= 0) { toast.error("Item is out of stock"); return; }
-          const enhancedData = await getItemWithDiscounts(item.stock_id);
-          const directSalesItem: DirectSales = {
-            __typename: "direct_sales",
-            user: "current_user",
-            max_quantity: details.quantity_available,
-            item,
-            details: enhancedData ? {
-              price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price),
-              quantity_available: parseFloat(enhancedData.balance),
-              tax_mode: parseInt(details.tax_mode.toString()),
-            } : details,
-            quantity: 1,
-            discount: "0.00",
-            enhanced_item: enhancedData,
-          };
-          addItemToCart(directSalesItem);
-          setSearchTerm("");
+        if (details === null || details === undefined) {
+          toast.error("Couldn't check stock — please scan again");
+          return;
         }
+        if (details.quantity_available <= 0) { toast.error("Item is out of stock"); return; }
+        const enhancedData = await getItemWithDiscounts(item.stock_id);
+        const directSalesItem: DirectSales = {
+          __typename: "direct_sales",
+          user: "current_user",
+          max_quantity: details.quantity_available,
+          item,
+          details: enhancedData ? {
+            price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price),
+            quantity_available: details.quantity_available,
+            tax_mode: parseInt(details.tax_mode.toString()),
+          } : details,
+          quantity: 1,
+          discount: "0.00",
+          enhanced_item: enhancedData,
+        };
+        addItemToCart(directSalesItem);
+        setSearchTerm("");
       } else if (searchTerm.length >= 15) {
+        // Not in the cached list — ask the server directly before giving up.
+        // Stock booked to this branch mid-shift won't be in the cache yet.
+        try {
+          const serverDetails = await fetchItemDetails(searchTerm, undefined, true);
+          if (serverDetails !== null && serverDetails !== undefined) {
+            // Refresh the cached list in the background for next time, but
+            // don't gate adding-to-cart on that refresh landing — the item
+            // may be excluded from the list endpoints (e.g. discount/approval
+            // filtering) even though this direct lookup is authoritative.
+            refetchInventory();
+
+            if (serverDetails.quantity_available <= 0) {
+              toast.error("Item is out of stock");
+              setSearchTerm("");
+              return;
+            }
+
+            const enhancedData = await getItemWithDiscounts(searchTerm);
+            const fallbackItem: InventoryItem = {
+              stock_id: searchTerm,
+              description: enhancedData?.description ?? searchTerm,
+              rate: enhancedData?.rate ?? "0",
+              kit: enhancedData?.kit ?? "",
+              units: enhancedData?.units ?? "",
+              mb_flag: enhancedData?.mb_flag ?? "",
+              branch_name: enhancedData?.branch_name ?? "",
+              pulldown: "",
+              item: searchTerm,
+              price: enhancedData?.price ?? serverDetails.price.toString(),
+              selling_price: enhancedData?.price ?? serverDetails.price.toString(),
+              balance: enhancedData?.balance ?? serverDetails.quantity_available.toString(),
+            };
+            const directSalesItem: DirectSales = {
+              __typename: "direct_sales",
+              user: "current_user",
+              max_quantity: serverDetails.quantity_available,
+              item: fallbackItem,
+              details: enhancedData ? {
+                price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price),
+                quantity_available: serverDetails.quantity_available,
+                tax_mode: serverDetails.tax_mode,
+              } : serverDetails,
+              quantity: 1,
+              discount: "0.00",
+              enhanced_item: enhancedData,
+            };
+            addItemToCart(directSalesItem);
+            setSearchTerm("");
+            return;
+          }
+        } catch (lookupError) {
+          console.error("Server lookup for unknown code failed:", lookupError);
+        }
         toast.error("Item not found in inventory");
         setSearchTerm("");
       }
