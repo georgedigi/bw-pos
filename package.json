@@ -7,7 +7,8 @@
     "build": "next build --no-lint",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "prebuild": "node -e \"const fs=require('fs');fs.mkdirSync('public',{recursive:true});fs.writeFileSync('public/version.json',JSON.stringify({build:Date.now()}))\""
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.7",

@@ -63,6 +63,39 @@ export const getEnhancedItemData = async (stock_id: string): Promise<EnhancedPri
   }
 };
 
+/**
+ * Rebuilds the cached catalogue without blocking whoever asked for it.
+ *
+ * Only one runs at a time: several scans in quick succession would otherwise
+ * each kick off a full catalogue download and queue behind one another.
+ * Failure is deliberately silent - the metadata stamp is only written on
+ * success, so the next scan simply tries again.
+ */
+let catalogueRefreshInFlight = false;
+
+async function refreshCatalogueInBackground(
+  site_company: SiteCompany,
+  account: UserAccountInfo,
+  site_url: string,
+  stock_id: string | undefined,
+  now: Date,
+): Promise<void> {
+  if (catalogueRefreshInFlight) return;
+  catalogueRefreshInFlight = true;
+  try {
+    const sellable = await fetch_all_sellable_items(site_company, account, site_url);
+    const item_inventory = await fetch_all_item_inventory(site_company, site_url, account, stock_id);
+
+    await setInventory("inventory", sellable || []);
+    await setPriceList("priceList", item_inventory?.items || []);
+    await setMetadata("metadata", now.toISOString());
+  } catch (catalogueError) {
+    console.error("Catalogue refresh failed (non-fatal):", catalogueError);
+  } finally {
+    catalogueRefreshInFlight = false;
+  }
+}
+
 export const fetchItemDetails = async (stock_id?: string, kit?: string, forceRefresh = true): Promise<any> => {
   const { site_company, account, site_url } = useAuthStore.getState();
   const lastUpdate = await getMetadata("metadata");
@@ -88,19 +121,14 @@ export const fetchItemDetails = async (stock_id?: string, kit?: string, forceRef
       );
       details = item_details;
 
-      // Refresh the catalogue only when it is actually stale, and never let a
-      // failure here discard the scan above.
+      // Refresh the catalogue in the BACKGROUND when it is stale. Do not await
+      // it: the scan answer is already in hand, and the full catalogue takes
+      // up to 16s to build on the server. Awaiting it made the cashier wait
+      // that long for an answer we already had, which is what branches
+      // described as "it errors, you wait, you scan again and it works" - the
+      // retry simply arrived after the server had finished rebuilding.
       if (!lastUpdate || new Date(lastUpdate) <= thirtyAgo) {
-        try {
-          const sellable = await fetch_all_sellable_items(site_company!, account!, site_url!);
-          const item_inventory = await fetch_all_item_inventory(site_company!, site_url!, account!, stock_id);
-
-          await setInventory("inventory", sellable || []);
-          await setPriceList("priceList", item_inventory?.items || []);
-          await setMetadata("metadata", now.toISOString());
-        } catch (catalogueError) {
-          console.error("Catalogue refresh failed (non-fatal):", catalogueError);
-        }
+        void refreshCatalogueInBackground(site_company!, account!, site_url!, stock_id, now);
       }
     } catch (error) {
       console.error("Error fetching item details from API:", error);
