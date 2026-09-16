@@ -435,8 +435,15 @@ const ItemSearchBox = () => {
   useEffect(() => {
     const addItemWithEnhancement = async () => {
       if (item) {
-        if (details === null || details === undefined) {
+        // react-query reports `undefined` while the lookup is still in flight,
+        // not only when it fails. Without this the toast fires on every scan
+        // during the normal wait, and the item still lands in the cart a moment
+        // later when the answer arrives.
+        if (detailsLoading) return;
+
+        if (detailsError || details === null || details === undefined) {
           toast.error("Couldn't check stock — please scan again");
+          setSearchTerm("");
           return;
         }
         if (details.quantity_available <= 0) { toast.error("Item is out of stock"); return; }
@@ -516,7 +523,7 @@ const ItemSearchBox = () => {
       }
     };
     addItemWithEnhancement();
-  }, [searchTerm, item, details]);
+  }, [searchTerm, item, details, detailsLoading, detailsError]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
