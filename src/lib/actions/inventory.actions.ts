@@ -103,6 +103,7 @@ export async function fetch_item_details(
   const response = await axios.postForm<string>(
     `${site_url}process.php`,
     form_data,
+    { timeout: 20000 },
   );
 
   if (response.data === "") {

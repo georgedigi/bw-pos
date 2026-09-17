@@ -3,7 +3,9 @@ import { ScanBarcodeIcon, Loader2, SearchCodeIcon } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
-import { fetchItemDetails, getEnhancedItemData, useInventory, useItemDetails } from "~/hooks/useInventory";
+import { useInventory } from "~/hooks/useInventory";
+import { fetch_item_details } from "~/lib/actions/inventory.actions";
+import { createScanQueue } from "~/lib/scan-queue";
 import { useCartStore } from "~/store/cart-store";
 import { toast } from "sonner";
 import { useAuthStore } from "~/store/auth-store";
@@ -54,7 +56,7 @@ import { useEnhancedPaymentCalculations } from "~/hawk-tuah/components/enhancedA
 
 const ItemSearchBox = () => {
   const { addItemToPayments, validateAndAddPayment, paymentCarts, clearPaymentCarts } = usePayStore();
-  const { inventory, loading, error, refetch: refetchInventory } = useInventory();
+  const { inventory } = useInventory();
   const { getItemWithDiscounts } = useEnhancedInventory();
   const { site_url, site_company, account, receipt_info } = useAuthStore.getState();
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
@@ -63,18 +65,33 @@ const ItemSearchBox = () => {
   const itemSearchRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const [searchTerm, setSearchTerm] = useState<string>("");
-  const item = inventory.find((invItem) => invItem.stock_id === searchTerm);
-  const {
-    data: details,
-    isLoading: detailsLoading,
-    error: detailsError,
-  } = useItemDetails(
-    site_url!,
-    site_company!,
-    account!,
-    item?.stock_id ?? "",
-    item?.kit ?? "",
-  );
+  const scanBuffer = useRef("");
+  const scanQueue = useRef<ReturnType<typeof createScanQueue> | null>(null);
+  const scanRevision = useRef(0);
+  const addingScannedItem = useRef(false);
+  const [pendingScans, setPendingScans] = useState(0);
+
+  useEffect(() => {
+    const queue = createScanQueue(setPendingScans);
+    scanQueue.current = queue;
+    const unsubscribeCart = useCartStore.subscribe((state, previous) => {
+      if (!addingScannedItem.current && state.currentCart?.cart_id !== previous.currentCart?.cart_id) {
+        scanRevision.current += 1;
+      }
+    });
+    const unsubscribeAuth = useAuthStore.subscribe((state, previous) => {
+      if (state.account !== previous.account || state.site_company !== previous.site_company || state.site_url !== previous.site_url) {
+        scanRevision.current += 1;
+      }
+    });
+    return () => {
+      scanRevision.current += 1;
+      queue.dispose();
+      scanQueue.current = null;
+      unsubscribeCart();
+      unsubscribeAuth();
+    };
+  }, []);
 
   // ── Payment data ────────────────────────────────────────────────────────────
   const { manualPayments } = useManualPayments();
@@ -167,6 +184,10 @@ const ItemSearchBox = () => {
   // ── Full invoice submission (mirrors handleProcessInvoice in amount-input-box) ─
   const handleSubmitInvoice = async () => {
     if (isSubmitting) return;
+    if (scanQueue.current?.pending) {
+      toast.error("Please wait for scanned items to finish adding");
+      return;
+    }
 
     // Read fresh from stores — avoids stale closure when called right after
     // validateAndAddPayment updates the Zustand store
@@ -432,110 +453,82 @@ const ItemSearchBox = () => {
     if (currentCart) handleUpdateCart(currentCart.cart_id, currentCart);
   }, [currentCart]);
 
-  useEffect(() => {
-    const addItemWithEnhancement = async () => {
-      if (item) {
-        if (detailsLoading) {
-          // Stock lookup is still in flight — not a failure, just not
-          // resolved yet. Wait for it instead of reporting a false error.
+  const submitScan = () => {
+    const code = scanBuffer.current.trim();
+    if (!code || !scanQueue.current) return;
+    if (isSubmitting) {
+      toast.error("Please wait for the sale to finish");
+      return;
+    }
+
+    // Consume synchronously: Enter/Tab or a repeated terminator cannot enqueue
+    // the same buffer twice. Never clear a later scan when this request finishes.
+    scanBuffer.current = "";
+    setSearchTerm("");
+    itemSearchRef.current?.focus();
+    const revision = scanRevision.current;
+    const auth = useAuthStore.getState();
+    const item = inventory.find((entry) => entry.stock_id === code);
+
+    scanQueue.current.enqueue(async () => {
+      if (revision !== scanRevision.current) return;
+      try {
+        if (!auth.site_url || !auth.site_company || !auth.account) {
+          throw new Error("Please sign in before scanning items");
+        }
+        // Stock decisions must use this scan's server response, never a cached
+        // zero or an offline catalogue fallback after a failed request.
+        const details = await fetch_item_details(
+          auth.site_url, auth.site_company.company_prefix, auth.account.id,
+          code, item?.kit ?? "0", undefined,
+        );
+        if (revision !== scanRevision.current) return;
+        if (!details) { toast.error(`Item not found: ${code}`); return; }
+        if (details.quantity_available <= 0) {
+          toast.error(`Item is out of stock: ${code}`);
           return;
         }
-        if (detailsError) {
-          toast.error(
-            detailsError instanceof Error
-              ? detailsError.message
-              : "Couldn't check stock — please scan again",
-          );
-          return;
-        }
-        if (details === null || details === undefined) {
-          toast.error("Couldn't check stock — please scan again");
-          setSearchTerm("");
-          return;
-        }
-        if (details.quantity_available <= 0) { toast.error("Item is out of stock"); return; }
-        const enhancedData = await getItemWithDiscounts(item.stock_id);
-        const directSalesItem: DirectSales = {
-          __typename: "direct_sales",
-          user: "current_user",
-          max_quantity: details.quantity_available,
-          item,
-          details: enhancedData ? {
-            price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price),
-            quantity_available: details.quantity_available,
-            tax_mode: parseInt(details.tax_mode.toString()),
-          } : details,
-          quantity: 1,
-          discount: "0.00",
-          enhanced_item: enhancedData,
+        const enhancedData = await getItemWithDiscounts(code);
+        if (revision !== scanRevision.current) return;
+        const fallbackItem: InventoryItem = {
+          stock_id: code,
+          description: enhancedData?.description ?? code,
+          rate: enhancedData?.rate ?? "0",
+          kit: enhancedData?.kit ?? "0",
+          units: enhancedData?.units ?? "",
+          mb_flag: enhancedData?.mb_flag ?? "",
+          branch_name: enhancedData?.branch_name ?? "",
+          pulldown: "",
+          item: code,
+          price: enhancedData?.price ?? details.price.toString(),
+          selling_price: enhancedData?.price ?? details.price.toString(),
+          balance: details.quantity_available.toString(),
         };
-        addItemToCart(directSalesItem);
-        setSearchTerm("");
-      } else if (searchTerm.length >= 15) {
-        // Not in the cached list — ask the server directly before giving up.
-        // Stock booked to this branch mid-shift won't be in the cache yet.
+        addingScannedItem.current = true;
         try {
-          const serverDetails = await fetchItemDetails(searchTerm, undefined, true);
-          if (serverDetails !== null && serverDetails !== undefined) {
-            // Refresh the cached list in the background for next time, but
-            // don't gate adding-to-cart on that refresh landing — the item
-            // may be excluded from the list endpoints (e.g. discount/approval
-            // filtering) even though this direct lookup is authoritative.
-            refetchInventory();
-
-            if (serverDetails.quantity_available <= 0) {
-              toast.error("Item is out of stock");
-              setSearchTerm("");
-              return;
-            }
-
-            const enhancedData = await getItemWithDiscounts(searchTerm);
-            const fallbackItem: InventoryItem = {
-              stock_id: searchTerm,
-              description: enhancedData?.description ?? searchTerm,
-              rate: enhancedData?.rate ?? "0",
-              kit: enhancedData?.kit ?? "",
-              units: enhancedData?.units ?? "",
-              mb_flag: enhancedData?.mb_flag ?? "",
-              branch_name: enhancedData?.branch_name ?? "",
-              pulldown: "",
-              item: searchTerm,
-              price: enhancedData?.price ?? serverDetails.price.toString(),
-              selling_price: enhancedData?.price ?? serverDetails.price.toString(),
-              balance: enhancedData?.balance ?? serverDetails.quantity_available.toString(),
-            };
-            const directSalesItem: DirectSales = {
-              __typename: "direct_sales",
-              user: "current_user",
-              max_quantity: serverDetails.quantity_available,
-              item: fallbackItem,
-              details: enhancedData ? {
-                price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price),
-                quantity_available: serverDetails.quantity_available,
-                tax_mode: serverDetails.tax_mode,
-              } : serverDetails,
-              quantity: 1,
-              discount: "0.00",
-              enhanced_item: enhancedData,
-            };
-            addItemToCart(directSalesItem);
-            setSearchTerm("");
-            return;
-          }
-          toast.error("Item not found in inventory");
-        } catch (lookupError) {
-          console.error("Server lookup for unknown code failed:", lookupError);
-          toast.error(
-            lookupError instanceof Error
-              ? lookupError.message
-              : "Couldn't check stock — please scan again",
-          );
+          addItemToCart({
+            __typename: "direct_sales",
+            user: "current_user",
+            max_quantity: details.quantity_available,
+            item: item ?? fallbackItem,
+            details: enhancedData ? {
+              ...details,
+              price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price),
+            } : details,
+            quantity: 1,
+            discount: "0.00",
+            enhanced_item: enhancedData,
+          });
+        } finally {
+          addingScannedItem.current = false;
         }
-        setSearchTerm("");
+      } catch (lookupError) {
+        if (revision !== scanRevision.current) return;
+        console.error("Stock lookup failed:", lookupError);
+        toast.error(`Couldn't check stock for ${code} — please scan again`);
       }
-    };
-    addItemWithEnhancement();
-  }, [searchTerm, item, details, detailsLoading, detailsError]);
+    });
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -544,16 +537,6 @@ const ItemSearchBox = () => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
-
-  if (loading || detailsLoading)
-    return (
-      <div className="max-w-full animate-pulse">
-        <div className="mb-2.5 h-2 rounded-full bg-gray-200 dark:bg-gray-700" />
-        <div className="mb-2.5 h-2 rounded-full bg-gray-200 dark:bg-gray-700" />
-        <div className="mb-2.5 h-2 rounded-full bg-gray-200 dark:bg-gray-700" />
-      </div>
-    );
-  if (error) return <div>Error: {error}</div>;
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -566,11 +549,28 @@ const ItemSearchBox = () => {
           name="item-search"
           autoFocus
           type="search"
-          placeholder="Search for product..."
+          placeholder="Scan barcode or enter code"
+          aria-label="Item barcode"
           className="pl-8 sm:w-[300px] md:w-full"
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={(e) => {
+            scanBuffer.current = e.target.value;
+            setSearchTerm(e.target.value);
+          }}
+          onKeyDown={(e) => {
+            if (!e.nativeEvent.isComposing && (e.key === "Enter" || (e.key === "Tab" && scanBuffer.current.trim()))) {
+              e.preventDefault();
+              submitScan();
+            }
+          }}
         />
+
+        <Button type="button" onClick={submitScan} disabled={isSubmitting}>Add</Button>
+        {pendingScans > 0 && (
+          <span role="status" className="text-sm text-muted-foreground">
+            Checking {pendingScans} item{pendingScans === 1 ? "" : "s"}…
+          </span>
+        )}
 
         {/* ── Pay Now — only visible on small screens ── */}
         <Dialog
