@@ -100,38 +100,38 @@ export async function fetch_item_details(
   if (pricing_id) {
     form_data.append("pid", pricing_id.id);
   }
-  try {
-    const response = await axios.postForm<string>(
-      `${site_url}process.php`,
-      form_data,
-    );
+  const response = await axios.postForm<string>(
+    `${site_url}process.php`,
+    form_data,
+  );
 
-    if (response.data === "") {
-      //No data was returned
-      return null;
-    }
-
-    const args = response.data.split("|");
-
-    const product_details: ProductPriceDetails = {
-      price: parseFloat(args[0] ?? "0"),
-      quantity_available: parseFloat(args[1] ?? "0"),
-      tax_mode: parseInt(args[2] ?? "0"),
-    };
-
-    if (args.length <= 3) {
-      return product_details;
-    }
-
-    return null;
-  } catch (e) {
-    console.log(JSON.stringify(e));
-    if (axios.isAxiosError(e)) {
-      console.log(e);
-    }
-
+  if (response.data === "") {
+    // Server explicitly has no record for this code — genuinely "not found",
+    // not a network/request failure, so don't throw here.
     return null;
   }
+
+  const args = response.data.split("|");
+
+  if (args.length > 3) {
+    throw new Error("Unexpected response from server — please rescan");
+  }
+
+  const price = parseFloat(args[0] ?? "");
+  const quantity_available = parseFloat(args[1] ?? "");
+  const tax_mode = parseInt(args[2] ?? "", 10);
+
+  if (
+    Number.isNaN(price) ||
+    Number.isNaN(quantity_available) ||
+    Number.isNaN(tax_mode)
+  ) {
+    // A malformed/empty segment used to silently become 0 (false "out of
+    // stock") or NaN (silently bypassing the stock check). Surface it instead.
+    throw new Error("Received invalid stock data from server — please rescan");
+  }
+
+  return { price, quantity_available, tax_mode } satisfies ProductPriceDetails;
 }
 
 export async function fetch_branch_discount_rules(

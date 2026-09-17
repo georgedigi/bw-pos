@@ -435,13 +435,20 @@ const ItemSearchBox = () => {
   useEffect(() => {
     const addItemWithEnhancement = async () => {
       if (item) {
-        // react-query reports `undefined` while the lookup is still in flight,
-        // not only when it fails. Without this the toast fires on every scan
-        // during the normal wait, and the item still lands in the cart a moment
-        // later when the answer arrives.
-        if (detailsLoading) return;
-
-        if (detailsError || details === null || details === undefined) {
+        if (detailsLoading) {
+          // Stock lookup is still in flight — not a failure, just not
+          // resolved yet. Wait for it instead of reporting a false error.
+          return;
+        }
+        if (detailsError) {
+          toast.error(
+            detailsError instanceof Error
+              ? detailsError.message
+              : "Couldn't check stock — please scan again",
+          );
+          return;
+        }
+        if (details === null || details === undefined) {
           toast.error("Couldn't check stock — please scan again");
           setSearchTerm("");
           return;
@@ -515,10 +522,15 @@ const ItemSearchBox = () => {
             setSearchTerm("");
             return;
           }
+          toast.error("Item not found in inventory");
         } catch (lookupError) {
           console.error("Server lookup for unknown code failed:", lookupError);
+          toast.error(
+            lookupError instanceof Error
+              ? lookupError.message
+              : "Couldn't check stock — please scan again",
+          );
         }
-        toast.error("Item not found in inventory");
         setSearchTerm("");
       }
     };

@@ -132,7 +132,15 @@ export const fetchItemDetails = async (stock_id?: string, kit?: string, forceRef
       }
     } catch (error) {
       console.error("Error fetching item details from API:", error);
-      details = await getItemPriceDetails(stock_id!); // Fallback to IndexedDB on error
+      const cached = await getItemPriceDetails(stock_id!);
+      if (cached) {
+        details = cached;
+      } else {
+        // No cached fallback either — surface the real failure (network
+        // error, malformed response, etc.) instead of silently returning
+        // null, so the caller can show the actual error message.
+        throw error;
+      }
     }
 
     return details;
