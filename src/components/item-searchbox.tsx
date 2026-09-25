@@ -554,8 +554,9 @@ const ItemSearchBox = () => {
           className="pl-8 sm:w-[300px] md:w-full"
           value={searchTerm}
           onChange={(e) => {
-            scanBuffer.current = e.target.value;
-            setSearchTerm(e.target.value);
+            const value = e.target.value.toUpperCase();
+            scanBuffer.current = value;
+            setSearchTerm(value);
           }}
           onKeyDown={(e) => {
             if (!e.nativeEvent.isComposing && (e.key === "Enter" || (e.key === "Tab" && scanBuffer.current.trim()))) {
