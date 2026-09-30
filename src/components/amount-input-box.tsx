@@ -28,7 +28,6 @@ import { pdf } from "@react-pdf/renderer";
 // import { addInvoice } from "~/utils/indexeddb";
 // import OfflineTransactionReceiptPDF from "./pdfs/offlineprint";
 // import { checkItemQuantities, highlightProblematicItems } from "./temporaryFixes";
-import { useInventory, useItemDetails } from "~/hooks/useInventory";
 import { EnhancedPaymentSummary, useEnhancedPaymentCalculations } from "~/hawk-tuah/components/enhancedAmountInput";
 import { submit_direct_sale_request_enhanced } from "~/hawk-tuah/actions/enhancedSubmission";
 import EnhancedTransactionReceiptPDF from "~/hawk-tuah/components/enhancedReceiptPdf";
@@ -65,7 +64,6 @@ const AmountInput = ({
     useCartStore();
   console.log("Current cart: ", currentCart)
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   const [isPrinted, setIsPrinted] = useState<boolean>(false);
 
 
@@ -83,16 +81,6 @@ const AmountInput = ({
     max_quantity: number;
   }
 
-  type ItemDetails = {
-    stock_id: string;
-    price: number;
-    quantity_available: number;
-    tax_mode: number;
-  };
-
-  const { inventory, loading: inventoryLoading, error: inventoryError } = useInventory(); // Fetch inventory
-  const [allDetails, setAllDetails] = useState<ItemDetails[]>([]);
-  // const [detailsError, setDetailsError] = useState<string | null>(null);
 
   // Function to fetch item details
   const fetchItemDetails = async (
@@ -133,34 +121,6 @@ const AmountInput = ({
     }
   };
 
-  useEffect(() => {
-    const fetchAllItemDetails = async () => {
-      if (!inventory || inventory.length === 0) return;
-
-      setIsFetchingDetails(true);
-
-      try {
-        const detailPromises = inventory.map(item => {
-          return fetchItemDetails(site_url!, site_company!.company_prefix, account!.id, item.stock_id, item.kit ?? "");
-        });
-
-        const resolvedDetails = await Promise.all(detailPromises);
-        // Filter out null values and set state
-        const validDetails = resolvedDetails.filter(detail => detail !== null);
-        setAllDetails(validDetails);
-
-        // console.log("Fetched item details:", validDetails);
-      } catch (error) {
-        console.error("Error fetching item details", error);
-      } finally {
-        setIsFetchingDetails(false);
-      }
-    };
-
-    if (inventory.length > 0) {
-      void fetchAllItemDetails();
-    }
-  }, [inventory, site_url, site_company!.company_prefix, account!.id]);
 
 
   const checkInventoryForCartItems = async (

@@ -169,6 +169,11 @@ export const useInventory = () => {
   const { data, error, isLoading } = useQuery<InventoryItem[], Error>({
     queryKey: ["inventory"],
     queryFn: fetchInventoryData,
+    // Each fetch downloads the whole catalogue (~500KB). Match the 30-minute
+    // IndexedDB freshness window instead of refetching on every mount/focus;
+    // live stock is still checked per scan via fetch_item_details.
+    staleTime: 1000 * 60 * 30,
+    refetchOnWindowFocus: false,
   });
 
   // console.log("Inventory Data:", data);
@@ -179,7 +184,11 @@ export const useInventory = () => {
     inventory: data || [],
     loading: isLoading,
     error: error ? error.message : null,
-    refetch: () => queryClient.invalidateQueries({ queryKey: ["inventory"] }),
+    refetch: () =>
+      queryClient.invalidateQueries(
+        { queryKey: ["inventory"] },
+        { cancelRefetch: false },
+      ),
   };
 };
 

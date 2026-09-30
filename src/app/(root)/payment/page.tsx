@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -29,6 +29,7 @@ import { Users2 } from "lucide-react";
 import { DashboardLayout } from "~/components/common/dashboard-layout";
 import Image from "next/image";
 import { Input } from "~/components/ui/input";
+import { useMediaQuery } from "~/hooks/use-media-query";
 const AmountInput = dynamic(() => import("~/components/amount-input-box"), {
   ssr: false,
 });
@@ -55,6 +56,14 @@ const Payment = () => {
   const totalPaid = tallyTotalAmountPaid(paymentCarts);
   const router = useRouter();
   const { customer } = useCustomers();
+
+  // Render only one layout. Hiding the other with CSS still mounts it, so every
+  // query and effect inside AmountInput/PaymentOptions ran twice per visit.
+  // `layoutReady` holds rendering until the media query has resolved on the
+  // client, otherwise desktop tills would mount the mobile layout first.
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const [layoutReady, setLayoutReady] = useState(false);
+  useEffect(() => setLayoutReady(true), []);
 
   // Shared customer + PIN selectors used in both layouts
   const CustomerSelector = (
@@ -138,7 +147,8 @@ const Payment = () => {
   return (
     <DashboardLayout title={site_company?.branch ?? ""}>
       {/* ── Mobile layout (< md) ── */}
-      <div className="flex flex-col gap-4 p-4 pb-24 md:hidden">
+      {layoutReady && !isDesktop && (
+      <div className="flex flex-col gap-4 p-4 pb-24">
         <Button
           onClick={() => {
             clearPaymentCarts();
@@ -176,9 +186,11 @@ const Payment = () => {
           />
         </div>
       </div>
+      )}
 
       {/* ── Desktop layout (≥ md) ── */}
-      <div className="hidden md:block">
+      {layoutReady && isDesktop && (
+      <div>
         <ResizablePanelGroup
           direction="horizontal"
           className="min-h-[100vh] max-w-[100vw] rounded-lg border"
@@ -220,6 +232,7 @@ const Payment = () => {
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      )}
     </DashboardLayout>
   );
 };
