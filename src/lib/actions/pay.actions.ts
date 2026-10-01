@@ -407,15 +407,45 @@ export async function initiate_stk_push(
   return response.data;
 }
 
+// branch and cp tell the server which till took the payment, so a code that has not reached the
+// ERP is checked with Safaricom under that till straight away instead of till after till. The
+// server answers a code it cannot find with HTTP 404 and its reason in `message`; that reason is
+// returned like any other reply rather than thrown, so the cashier sees it.
 export async function lookup_mpesa_by_code(
   site_url: string,
   mpesa_code: string,
+  branch = "",
+  cp = "",
 ): Promise<StkLookupResponse> {
   const response = await axios.get<StkLookupResponse>(
     `${site_url}BankIntergrations/Mpesa/routes/lookup.php`,
-    { params: { mpesa_code } },
+    {
+      params: { mpesa_code, ...(branch ? { branch } : {}), ...(cp ? { cp } : {}) },
+      validateStatus: (s) => s === 200 || s === 404,
+    },
   );
   return response.data;
+}
+
+// Look a code up, and while the server is still asking Safaricom ("pending") ask again on our own
+// every few seconds, instead of showing that as an error and leaving the cashier to press Lookup
+// again. Returns the last reply: found, already used, not found, or still pending at the timeout.
+export async function find_mpesa_by_code(
+  site_url: string,
+  mpesa_code: string,
+  branch = "",
+  cp = "",
+  onWaiting?: (message: string) => void,
+  intervalMs = 4000,
+  timeoutMs = 45000,
+): Promise<StkLookupResponse> {
+  const started = Date.now();
+  for (;;) {
+    const res = await lookup_mpesa_by_code(site_url, mpesa_code.trim().toUpperCase(), branch, cp);
+    if (res.payment_status !== "pending" || Date.now() - started >= timeoutMs) return res;
+    onWaiting?.(res.message || "Checking with Safaricom...");
+    await delay(intervalMs);
+  }
 }
 
 export async function lookup_stk_payment(

@@ -21,7 +21,7 @@ import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Loader2, SearchCodeIcon } from "lucide-react";
-import { lookup_mpesa_by_code, initiate_stk_push, lookup_stk_payment } from "~/lib/actions/pay.actions";
+import { find_mpesa_by_code, initiate_stk_push, lookup_stk_payment } from "~/lib/actions/pay.actions";
 import { useAuthStore } from "~/store/auth-store";
 import { toast } from "sonner";
 import { removeSpecialCharacters } from "../../lib/utils";
@@ -43,7 +43,7 @@ const PaymentOptions = ({
   amount: string;
   setAmount: React.Dispatch<React.SetStateAction<string>>;
 }) => {
-  const { site_url } = useAuthStore();
+  const { site_url, account, site_company } = useAuthStore();
   const { manualPayments } = useManualPayments();
   const {
     mpesaPayments,
@@ -107,11 +107,17 @@ const PaymentOptions = ({
   };
 
   const handleMpesaLookup = async () => {
- 
     setIsLoading(true);
+    let toastId: string | number | undefined;
     try {
-        
-      const res = await lookup_mpesa_by_code(site_url!, lookupRef.trim());
+      const res = await find_mpesa_by_code(
+        site_url!,
+        lookupRef,
+        account?.default_store_name ?? "",
+        site_company?.company_prefix ?? "",
+        (message) => { toastId = toast.loading(message, { id: toastId }); },
+      );
+      if (toastId !== undefined) toast.dismiss(toastId);
       if (res.payment_success && res.data?.transaction) {
         const tx = res.data.transaction;
         setFoundTransaction({
@@ -122,11 +128,16 @@ const PaymentOptions = ({
           TransTime: tx.transaction_date,
         });
         setTransactionFoundDialog(true);
+      } else if (res.payment_status === "pending") {
+        toast.warning("Safaricom has not answered yet. Try the same code again in a minute.");
       } else {
-        toast.error(res.message || "Transaction not found.");
+        // already used on a sale, not found, or a till that could not be checked: the server's
+        // own message says which, and what to do
+        toast.error(res.message || "Transaction not found.", { duration: 10000 });
       }
     } catch {
-      toast.error("An error occurred during the lookup. Please try again.");
+      if (toastId !== undefined) toast.dismiss(toastId);
+      toast.error("Could not reach the server for the lookup. Check the connection and try again.");
     } finally {
       setIsLoading(false);
     }

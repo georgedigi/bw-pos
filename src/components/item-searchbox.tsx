@@ -40,7 +40,7 @@ import {
 import { usePayStore } from "~/store/pay-store";
 import { useManualPayments, useMpesaPayments } from "~/hooks/use-payments";
 import {
-  lookup_mpesa_by_code,
+  find_mpesa_by_code,
   initiate_stk_push,
   lookup_stk_payment,
 } from "~/lib/actions/pay.actions";
@@ -331,8 +331,16 @@ const ItemSearchBox = () => {
 
   const handleMpesaLookup = async () => {
     setIsLookupLoading(true);
+    let toastId: string | number | undefined;
     try {
-      const res = await lookup_mpesa_by_code(site_url!, lookupRef.trim());
+      const res = await find_mpesa_by_code(
+        site_url!,
+        lookupRef,
+        account?.default_store_name ?? "",
+        site_company?.company_prefix ?? "",
+        (message) => { toastId = toast.loading(message, { id: toastId }); },
+      );
+      if (toastId !== undefined) toast.dismiss(toastId);
       if (res.payment_success && res.data?.transaction) {
         const tx = res.data.transaction;
         setFoundTransaction({
@@ -343,11 +351,16 @@ const ItemSearchBox = () => {
           TransTime: tx.transaction_date,
         });
         setConfirmOpen(true);
+      } else if (res.payment_status === "pending") {
+        toast.warning("Safaricom has not answered yet. Try the same code again in a minute.");
       } else {
-        toast.error(res.message || "Transaction not found.");
+        // already used on a sale, not found, or a till that could not be checked: the server's
+        // own message says which, and what to do
+        toast.error(res.message || "Transaction not found.", { duration: 10000 });
       }
     } catch {
-      toast.error("Lookup failed. Please try again.");
+      if (toastId !== undefined) toast.dismiss(toastId);
+      toast.error("Could not reach the server for the lookup. Check the connection and try again.");
     } finally {
       setIsLookupLoading(false);
     }
