@@ -36,14 +36,17 @@ const fetchMpesaPayments = async (): Promise<Payment[]> => {
 
 export const useManualPayments = () => {
   const queryClient = useQueryClient();
+  const { site_url, site_company, account } = useAuthStore();
+  const queryKey = ["manualPayments", site_url, site_company?.company_prefix, account?.id, account?.default_store];
 
   const { data, error, isLoading } = useQuery<
     ManualBankPaymentAccount[],
     Error
   >({
-    queryKey: ["manualPayments"],
+    queryKey,
+    enabled: !!(site_url && site_company && account),
     queryFn: fetchManualPayments,
-    // staleTime: 1000 * 60 * 60 * 24, // 24 hours
+    staleTime: 1000 * 60 * 60, // bank accounts rarely change
   });
 
   return {
@@ -51,17 +54,23 @@ export const useManualPayments = () => {
     loading: isLoading,
     error: error ? error.message : null,
     refetch: () =>
-      queryClient.invalidateQueries({ queryKey: ["manualPayments"] }),
+      queryClient.invalidateQueries(
+        { queryKey },
+        { cancelRefetch: false },
+      ),
   };
 };
 
 export const useMpesaPayments = () => {
   const queryClient = useQueryClient();
+  const { site_url, site_company, account } = useAuthStore();
+  const queryKey = ["mpesaPayments", site_url, site_company?.company_prefix, account?.id, account?.default_store];
 
   const { data, error, isLoading } = useQuery<Payment[], Error>({
-    queryKey: ["mpesaPayments"],
+    queryKey,
+    enabled: !!(site_url && site_company && account),
     queryFn: fetchMpesaPayments,
-    // staleTime: 1000 * 60 * 60 * 24, // 24 hours
+    staleTime: 1000 * 15,
   });
 
   return {
@@ -69,6 +78,11 @@ export const useMpesaPayments = () => {
     loading: isLoading,
     error: error ? error.message : null,
     refetch: () =>
-      queryClient.invalidateQueries({ queryKey: ["mpesaPayments"] }),
+      // Repeated clicks while a refresh is in flight reuse it instead of
+      // cancelling and re-sending the request each time.
+      queryClient.invalidateQueries(
+        { queryKey },
+        { cancelRefetch: false },
+      ),
   };
 };

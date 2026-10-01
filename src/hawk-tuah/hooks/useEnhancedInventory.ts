@@ -9,20 +9,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useAuthStore } from '~/store/auth-store';
-import {
-    fetch_all_item_inventory,
-    fetch_all_sellable_items
-} from '~/lib/actions/inventory.actions';
-import {
-    getInventory,
-    getPriceList,
-    setInventory,
-    setPriceList,
-    getMetadata,
-    setMetadata
-} from '~/utils/indexeddb';
+import { useInventory } from "~/hooks/useInventory";
+import { getItemPriceDetails } from '~/utils/indexeddb';
 import { EnhancedPriceList } from '../types/discount-types';
 import { discountService } from '../services/discount-service';
 
@@ -34,45 +22,14 @@ export const useEnhancedInventory = () => {
     const [isInitialized, setIsInitialized] = useState(false);
 
     // Fetch enhanced inventory data
-    const { data: inventoryData, isLoading, error, refetch } = useQuery({
-        queryKey: ['enhanced-inventory'],
-        queryFn: async () => {
-            const { site_company, account, site_url } = useAuthStore.getState();
-
-            if (!site_company || !account || !site_url) {
-                throw new Error('Missing authentication data');
-            }
-
-            console.log('🔄 Fetching enhanced inventory data...');
-
-            // Fetch both basic and enhanced inventory
-            const [basicInventory, enhancedInventory] = await Promise.all([
-                fetch_all_sellable_items(site_company, account, site_url),
-                fetch_all_item_inventory(site_company, site_url, account)
-            ]);
-
-            // Store in IndexedDB for offline access
-            await setInventory('inventory', basicInventory || []);
-            await setPriceList('priceList', enhancedInventory?.items || []);
-            await setMetadata('metadata', new Date().toISOString());
-
-            console.log(`✅ Loaded ${enhancedInventory?.items?.length || 0} enhanced inventory items`);
-
-            return {
-                basic: basicInventory || [],
-                enhanced: enhancedInventory?.items || []
-            };
-        },
-        staleTime: 30 * 60 * 1000, // 30 minutes
-        refetchOnWindowFocus: false
-    });
+    const { catalogue: inventoryData, loading: isLoading, error, refetch } = useInventory();
 
     // Initialize enhanced inventory map
     useEffect(() => {
         if (inventoryData?.enhanced) {
             const map = new Map<string, EnhancedPriceList>();
 
-            inventoryData.enhanced.forEach((item: PriceList) => {
+            inventoryData.enhanced.forEach((item: EnhancedPriceList) => {
                 map.set(item.stock_id, item);
             });
 
@@ -97,16 +54,10 @@ export const useEnhancedInventory = () => {
 
             // If not in memory, try IndexedDB
             console.log(`🔍 Searching IndexedDB for enhanced data: ${stock_id}`);
-            const storedData = await getPriceList('priceList');
-
-            if (storedData && Array.isArray(storedData)) {
-                const item = storedData.find((item: EnhancedPriceList) => item.stock_id === stock_id);
-                if (item) {
-                    // Add to memory cache for future use
-                    enhancedInventoryMap.set(stock_id, item);
-                    setEnhancedInventoryMap(new Map(enhancedInventoryMap));
-                    return item;
-                }
+            const item = await getItemPriceDetails(stock_id);
+            if (item) {
+                setEnhancedInventoryMap(previous => new Map(previous).set(stock_id, item));
+                return item;
             }
 
             console.log(`⚠️ No enhanced data found for ${stock_id}`);
@@ -211,7 +162,7 @@ export const useEnhancedInventory = () => {
 
         // State
         isLoading,
-        error: error?.message || null,
+        error,
         isInitialized,
 
         // Methods

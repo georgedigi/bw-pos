@@ -407,15 +407,57 @@ export async function initiate_stk_push(
   return response.data;
 }
 
+// Include the till context and preserve server error messages regardless of HTTP status.
 export async function lookup_mpesa_by_code(
   site_url: string,
   mpesa_code: string,
+  branch = "",
+  cp = "",
 ): Promise<StkLookupResponse> {
-  const response = await axios.get<StkLookupResponse>(
-    `${site_url}BankIntergrations/Mpesa/routes/lookup.php`,
-    { params: { mpesa_code } },
-  );
-  return response.data;
+  try {
+    const response = await axios.get<StkLookupResponse>(
+      `${site_url}BankIntergrations/Mpesa/routes/lookup.php`,
+      {
+        params: { mpesa_code, ...(branch ? { branch } : {}), ...(cp ? { cp } : {}) },
+      },
+    );
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError<StkLookupResponse>(error)) {
+      const message = error.response?.data?.message;
+      if (typeof message === "string" && message.trim()) {
+        return {
+          success: false,
+          payment_status: "error",
+          payment_success: false,
+          payment_failed: true,
+          message,
+        };
+      }
+    }
+    throw error;
+  }
+}
+
+// Look a code up, and while the server is still asking Safaricom ("pending") ask again on our own
+// every few seconds, instead of showing that as an error and leaving the cashier to press Lookup
+// again. Returns the last reply: found, already used, not found, or still pending at the timeout.
+export async function find_mpesa_by_code(
+  site_url: string,
+  mpesa_code: string,
+  branch = "",
+  cp = "",
+  onWaiting?: (message: string) => void,
+  intervalMs = 4000,
+  timeoutMs = 45000,
+): Promise<StkLookupResponse> {
+  const started = Date.now();
+  for (;;) {
+    const res = await lookup_mpesa_by_code(site_url, mpesa_code.trim().toUpperCase(), branch, cp);
+    if (res.payment_status !== "pending" || Date.now() - started >= timeoutMs) return res;
+    onWaiting?.(res.message || "Checking with Safaricom...");
+    await delay(intervalMs);
+  }
 }
 
 export async function lookup_stk_payment(
