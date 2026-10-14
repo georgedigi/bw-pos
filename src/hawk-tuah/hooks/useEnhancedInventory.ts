@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useInventory } from "~/hooks/useInventory";
-import { getItemPriceDetails } from '~/utils/indexeddb';
+import { getEnhancedPriceRecord } from '~/utils/indexeddb';
 import { EnhancedPriceList } from '../types/discount-types';
 import { discountService } from '../services/discount-service';
 
@@ -54,7 +54,7 @@ export const useEnhancedInventory = () => {
 
             // If not in memory, try IndexedDB
             console.log(`🔍 Searching IndexedDB for enhanced data: ${stock_id}`);
-            const item = await getItemPriceDetails(stock_id);
+            const item = await getEnhancedPriceRecord(stock_id);
             if (item) {
                 setEnhancedInventoryMap(previous => new Map(previous).set(stock_id, item));
                 return item;
