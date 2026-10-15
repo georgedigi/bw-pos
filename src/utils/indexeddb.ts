@@ -134,6 +134,15 @@ export const getEnhancedPriceRecord = async (
   return item as unknown as EnhancedPriceList | undefined;
 };
 
+// Overwrite one catalogue record with a fresher copy from the server.
+export const putEnhancedPriceRecord = async (
+  item: EnhancedPriceList,
+): Promise<void> => {
+  if (!dbPromise) return;
+  const db = await dbPromise;
+  await db.put("priceList", item as unknown as PriceList[]);
+};
+
 export const deletePriceList = async (
   storeName: keyof Database,
   key: string,

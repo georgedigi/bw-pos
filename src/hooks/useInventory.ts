@@ -41,15 +41,26 @@ export async function loadCatalogue(site_company: SiteCompany, account: UserAcco
   }, force);
 }
 
+// How often an open till re-downloads the catalogue so search and browse
+// prices do not stay frozen for a whole shift. Scans do not depend on this:
+// each one asks the server for that item's current discount.
+const CATALOGUE_REFRESH = 15 * 60 * 1000;
+
 export function useCatalogue() {
+  const queryClient = useQueryClient();
   const { site_company, account, site_url } = useAuthStore();
+  const key = catalogueKey(site_url, site_company, account);
   return useQuery({
-    queryKey: catalogueKey(site_url, site_company, account),
-    queryFn: () => loadCatalogue(site_company!, account!, site_url!),
+    queryKey: key,
+    // A refetch of data already on screen must bypass the module cache,
+    // otherwise the interval below just gets the same copy back.
+    queryFn: () => loadCatalogue(site_company!, account!, site_url!, queryClient.getQueryData(key) !== undefined),
     enabled: !!(site_company && account && site_url),
     staleTime: CATALOGUE_TTL,
     gcTime: CATALOGUE_TTL,
     refetchOnWindowFocus: false,
+    refetchInterval: CATALOGUE_REFRESH,
+    refetchIntervalInBackground: true,
   });
 }
 

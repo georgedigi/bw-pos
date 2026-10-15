@@ -489,6 +489,9 @@ const ItemSearchBox = () => {
         if (!auth.site_url || !auth.site_company || !auth.account) {
           throw new Error("Please sign in before scanning items");
         }
+        // Price and discount are looked up alongside the stock check, not after
+        // it, so the live discount lookup adds no wait to the scan.
+        const enhancedLookup = getItemWithDiscounts(code);
         // Stock decisions must use this scan's server response, never a cached
         // zero or an offline catalogue fallback after a failed request.
         const details = await fetch_item_details(
@@ -501,7 +504,7 @@ const ItemSearchBox = () => {
           toast.error(`Item is out of stock: ${code}`);
           return;
         }
-        const enhancedData = await getItemWithDiscounts(code);
+        const enhancedData = await enhancedLookup;
         if (revision !== scanRevision.current) return;
         const fallbackItem: InventoryItem = {
           stock_id: code,

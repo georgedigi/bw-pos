@@ -64,9 +64,12 @@ export async function fetch_all_item_inventory(
   form_data.append("type", "Sales");
 
   try {
+    // A single-item lookup sits on the scan path, so it must not hang a sale;
+    // the full catalogue download is allowed to take as long as it needs.
     const response = await axios.postForm<EnhancedInventoryResponse>(
       `${site_url}process.php`,
       form_data,
+      stock_id ? { timeout: 8000 } : undefined,
     );
     console.log("All item inventory: ", response);
 
