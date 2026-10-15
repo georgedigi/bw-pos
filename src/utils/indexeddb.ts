@@ -123,6 +123,26 @@ export const getItemPriceDetails = async (
   return undefined; // Return undefined if no item found
 };
 
+// Full catalogue record, discount fields included. getItemPriceDetails strips
+// them, so it must not be used anywhere a discount is applied.
+export const getEnhancedPriceRecord = async (
+  stock_id: string,
+): Promise<EnhancedPriceList | undefined> => {
+  if (!dbPromise) return;
+  const db = await dbPromise;
+  const item = await db.get("priceList", stock_id);
+  return item as unknown as EnhancedPriceList | undefined;
+};
+
+// Overwrite one catalogue record with a fresher copy from the server.
+export const putEnhancedPriceRecord = async (
+  item: EnhancedPriceList,
+): Promise<void> => {
+  if (!dbPromise) return;
+  const db = await dbPromise;
+  await db.put("priceList", item as unknown as PriceList[]);
+};
+
 export const deletePriceList = async (
   storeName: keyof Database,
   key: string,

@@ -64,9 +64,13 @@ export async function fetch_all_item_inventory(
   form_data.append("type", "Sales");
 
   try {
+    // A single-item lookup runs alongside the scan's stock check, which allows
+    // 20s, so the same limit adds no wait. A shorter one gave up while the
+    // server was busy and the item rang up unnamed at full price.
     const response = await axios.postForm<EnhancedInventoryResponse>(
       `${site_url}process.php`,
       form_data,
+      stock_id ? { timeout: 20000 } : undefined,
     );
     console.log("All item inventory: ", response);
 

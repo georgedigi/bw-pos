@@ -10,9 +10,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useInventory } from "~/hooks/useInventory";
-import { getItemPriceDetails } from '~/utils/indexeddb';
+import { fetch_all_item_inventory } from '~/lib/actions/inventory.actions';
+import { useAuthStore } from '~/store/auth-store';
+import { getEnhancedPriceRecord, putEnhancedPriceRecord } from '~/utils/indexeddb';
 import { EnhancedPriceList } from '../types/discount-types';
 import { discountService } from '../services/discount-service';
+import { applyBetterRule, pickScannedItem } from '../utils/scan-discount';
 
 /**
  * Enhanced inventory hook with discount support
@@ -41,7 +44,7 @@ export const useEnhancedInventory = () => {
     }, [inventoryData]);
 
     /**
-     * Get enhanced item data by stock_id
+     * Get enhanced item data by stock_id from the local catalogue copy
      */
     const getEnhancedItemData = useCallback(async (stock_id: string): Promise<EnhancedPriceList | null> => {
         try {
@@ -54,7 +57,7 @@ export const useEnhancedInventory = () => {
 
             // If not in memory, try IndexedDB
             console.log(`🔍 Searching IndexedDB for enhanced data: ${stock_id}`);
-            const item = await getItemPriceDetails(stock_id);
+            const item = await getEnhancedPriceRecord(stock_id);
             if (item) {
                 setEnhancedInventoryMap(previous => new Map(previous).set(stock_id, item));
                 return item;
@@ -70,6 +73,31 @@ export const useEnhancedInventory = () => {
     }, [enhancedInventoryMap]);
 
     /**
+     * Ask the server for this one item's current price and discount.
+     *
+     * The catalogue copy is downloaded once and can be many minutes old, so a
+     * discount approved after the till loaded never reached a scan until the
+     * cashier refreshed the browser. The scan must price from the server's
+     * answer at the moment of the scan; the catalogue is only the fallback.
+     */
+    const fetchLiveItemData = useCallback(async (stock_id: string): Promise<EnhancedPriceList | null> => {
+        const { site_company, account, site_url } = useAuthStore.getState();
+        if (!site_company || !account || !site_url) return null;
+        try {
+            const response = await fetch_all_item_inventory(site_company, site_url, account, stock_id);
+            const item = pickScannedItem(response?.items, stock_id);
+            if (!item) return null;
+            setEnhancedInventoryMap(previous => new Map(previous).set(stock_id, item));
+            void putEnhancedPriceRecord(item).catch(error =>
+                console.error(`Could not cache live price for ${stock_id} (non-fatal):`, error));
+            return item;
+        } catch (error) {
+            console.error(`Live price lookup failed for ${stock_id}, using cached catalogue:`, error);
+            return null;
+        }
+    }, []);
+
+    /**
      * Get item with applied discounts (including dynamic bulk discounts)
      */
     const getItemWithDiscounts = useCallback(async (
@@ -77,46 +105,32 @@ export const useEnhancedInventory = () => {
         cartTotal?: number
     ): Promise<EnhancedPriceList | null> => {
         try {
-            const baseItem = await getEnhancedItemData(stock_id);
+            const liveItem = await fetchLiveItemData(stock_id);
+            const baseItem = liveItem ?? await getEnhancedItemData(stock_id);
             if (!baseItem) return null;
 
-            // Apply additional discount logic if needed
             // (bulk discounts are calculated at cart level, not item level)
+            const price = parseFloat(baseItem.price);
+            let item = baseItem;
 
-            // Check if there are category discounts that might be better than item discounts
-            const categoryDiscount = discountService.findCategoryDiscount(
-                baseItem.category_id,
-                parseFloat(baseItem.price)
-            );
-
-            // If category discount is better than current discount, use it
-            if (categoryDiscount && categoryDiscount.discount_percent > baseItem.discount_percent) {
-                const updatedItem: EnhancedPriceList = {
-                    ...baseItem,
-                    discount_percent: categoryDiscount.discount_percent,
-                    discounted_price: parseFloat(baseItem.price) * (1 - categoryDiscount.discount_percent / 100),
-                    has_discount: true,
-                    discount_details: {
-                        discount_id: categoryDiscount.id,
-                        discount_type: 'category',
-                        discount_percent: categoryDiscount.discount_percent,
-                        discount_amount: parseFloat(baseItem.price) * (categoryDiscount.discount_percent / 100),
-                        lower_limit: categoryDiscount.lower_limit,
-                        upper_limit: categoryDiscount.upper_limit
-                    }
-                };
-
-                console.log(`🎯 Applied better category discount for ${stock_id}: ${categoryDiscount.discount_percent}%`);
-                return updatedItem;
+            // Offline / server unreachable: the cached record may predate a new
+            // item discount, so also check the rules, which refresh every 10 min.
+            if (!liveItem) {
+                item = applyBetterRule(item, discountService.findItemDiscount(stock_id, price));
             }
 
-            return baseItem;
+            // Check if there are category discounts that might be better than item discounts
+            const withCategory = applyBetterRule(item, discountService.findCategoryDiscount(baseItem.category_id, price));
+            if (withCategory !== item) {
+                console.log(`🎯 Applied better category discount for ${stock_id}: ${withCategory.discount_percent}%`);
+            }
+            return withCategory;
 
         } catch (error) {
             console.error(`❌ Error applying discounts for ${stock_id}:`, error);
             return null;
         }
-    }, [getEnhancedItemData]);
+    }, [fetchLiveItemData, getEnhancedItemData]);
 
     /**
      * Get all enhanced inventory items
