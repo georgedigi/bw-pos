@@ -506,6 +506,13 @@ const ItemSearchBox = () => {
         }
         const enhancedData = await enhancedLookup;
         if (revision !== scanRevision.current) return;
+        // No catalogue entry and no price record: the line would show only the
+        // code and ring up at full price with its discount missing. Refuse it so
+        // the cashier rescans instead of selling at the wrong price.
+        if (!item && !enhancedData) {
+          toast.error(`Couldn't load price for ${code} — please scan again`);
+          return;
+        }
         const fallbackItem: InventoryItem = {
           stock_id: code,
           description: enhancedData?.description ?? code,
