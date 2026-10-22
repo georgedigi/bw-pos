@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { generateRandomString } from "~/lib/utils";
 import { setCart, getCart, deleteCart } from "~/utils/indexeddb";
+import { useAuthStore } from "~/store/auth-store";
+import { release_grading_tag } from "~/lib/actions/inventory.actions";
 
 interface CartState {
   selectedCartItem: DirectSales | null;
@@ -23,6 +25,20 @@ interface CartState {
 
 const LOCAL_STORAGE_KEY = "currentCart";
 const invNo = generateRandomString(3);
+
+// A scanned per-piece label is reserved on the server for the cart it goes
+// into before it is added, so a new cart's id has to be known before the cart
+// exists. The id handed out here is the one the next new cart takes.
+let pendingCartId: string | null = null;
+export const cartIdForNextItem = (): string => {
+  const cart = useCartStore.getState().currentCart;
+  if (cart) return cart.cart_id;
+  if (!pendingCartId) pendingCartId = `cart_${invNo}${Date.now()}`;
+  return pendingCartId;
+};
+
+// Graded codes and their per-piece labels: <stock>-<grade>-<number>
+export const GRADED_CODE = /^.+-\d+$/;
 
 const initialState = {
   selectedCartItem: null,
@@ -81,9 +97,10 @@ export const useCartStore = create<CartState>((set, get) => {
       const state = get();
       if (!state.currentCart) {
         const newCart: Cart = {
-          cart_id: `cart_${invNo}${Date.now()}`,
+          cart_id: pendingCartId ?? `cart_${invNo}${Date.now()}`,
           items: [item],
         };
+        pendingCartId = null;
         console.log("new cart", newCart);
 
         set({ currentCart: newCart });
@@ -141,9 +158,22 @@ export const useCartStore = create<CartState>((set, get) => {
     deleteItemFromCart: (item: DirectSales) => {
       const state = get();
       if (state.currentCart) {
+        // Lines are one per code: a label's line shares its description with
+        // every other label of the same item, so match the code too.
         const updatedItems = state.currentCart.items.filter(
-          (cartItem) => cartItem.item.description !== item.item.description,
+          (cartItem) =>
+            cartItem.item.stock_id !== item.item.stock_id ||
+            cartItem.item.description !== item.item.description,
         );
+        // give the label back so it can be scanned into another cart
+        const { site_url, site_company } = useAuthStore.getState();
+        if (GRADED_CODE.test(item.item.stock_id) && site_url && site_company)
+          void release_grading_tag(
+            site_url,
+            site_company.company_prefix,
+            state.currentCart.cart_id,
+            item.item.stock_id,
+          );
 
         const updatedCart: Cart = {
           ...state.currentCart,

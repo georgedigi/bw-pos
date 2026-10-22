@@ -17,6 +17,9 @@ export const env = createEnv({
    */
   client: {
     // NEXT_PUBLIC_CLIENTVAR: z.string(),
+    // Testing only: replaces the company_url from digerp.com/config_site.php
+    // so all process.php calls go to e.g. https://budgetwear.digerp.com/dev/
+    NEXT_PUBLIC_BACKEND_URL_OVERRIDE: z.string().url().optional(),
   },
 
   /**
@@ -26,6 +29,8 @@ export const env = createEnv({
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
+    NEXT_PUBLIC_BACKEND_URL_OVERRIDE:
+      process.env.NEXT_PUBLIC_BACKEND_URL_OVERRIDE,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

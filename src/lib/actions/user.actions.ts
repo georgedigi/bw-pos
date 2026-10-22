@@ -42,6 +42,12 @@ export async function fetch_site_info(site: string) {
       return null;
     }
 
+    // Testing only (see src/env.js): point the till at another backend, e.g. dev
+    const override = process.env.NEXT_PUBLIC_BACKEND_URL_OVERRIDE;
+    if (override) {
+      return response.data.map((info) => ({ ...info, company_url: override }));
+    }
+
     return response.data;
   } catch (e) {
     console.log("Failed to get SIte Info");
