@@ -4,9 +4,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { useInventory } from "~/hooks/useInventory";
-import { fetch_item_details } from "~/lib/actions/inventory.actions";
+import {
+  fetch_item_details,
+  lookup_grading_tag,
+  release_grading_tag,
+} from "~/lib/actions/inventory.actions";
 import { createScanQueue } from "~/lib/scan-queue";
-import { useCartStore } from "~/store/cart-store";
+import { cartIdForNextItem, GRADED_CODE, useCartStore } from "~/store/cart-store";
 import { toast } from "sonner";
 import { useAuthStore } from "~/store/auth-store";
 import {
@@ -466,6 +470,102 @@ const ItemSearchBox = () => {
     if (currentCart) handleUpdateCart(currentCart.cart_id, currentCart);
   }, [currentCart]);
 
+  // One label is one piece: it goes in as its own line of quantity 1, priced
+  // and discounted as the item it belongs to. A label already in the cart,
+  // already sold or cancelled is refused here; checkout checks all of this
+  // again on the server. The lookup also reserves the label for this cart, so
+  // once scanned it cannot go into any other cart, at this till or another,
+  // until it is taken off this one or the reservation lapses (15 minutes).
+  // Returns false when the code is not a label, or the server could not be
+  // asked, so the scan carries on as a stock item.
+  const addLabel = async (
+    code: string,
+    revision: number,
+    auth: ReturnType<typeof useAuthStore.getState>,
+  ): Promise<boolean> => {
+    const url = auth.site_url!;
+    const prefix = auth.site_company!.company_prefix;
+    const cartId = cartIdForNextItem();
+    const tag = await lookup_grading_tag(url, prefix, code, cartId);
+    if (!tag) return false;
+    const inThisCart = () =>
+      useCartStore.getState().currentCart?.items.some((x) => x.item.stock_id === code) ?? false;
+    // a reservation this scan took but did not use goes back
+    const refuse = (message?: string) => {
+      if (tag.reserved === 1 && !inThisCart())
+        void release_grading_tag(url, prefix, cartId, code);
+      if (message) toast.error(message);
+      return true;
+    };
+    if (revision !== scanRevision.current) return refuse();
+    if (tag.voided) {
+      if (tag.void_reason === "returned")
+        return refuse(`${code} was returned to HQ at the end of its cycle`);
+      if (tag.void_reason === "baled") return refuse(`${code} was cleared to bales`);
+      return refuse(`${code} was cancelled when its grading order changed; print its label again`);
+    }
+    if (tag.sold)
+      return refuse(`${code} is already sold${tag.sold_receipt ? ` (receipt ${tag.sold_receipt})` : ""}`);
+    if (inThisCart()) return refuse(`${code} is already in the cart`);
+    if (tag.reserved === 0) return refuse(`${code} is already scanned in another cart`);
+
+    const itemCode = tag.item_code;
+    const item = inventory.find((entry) => entry.stock_id === itemCode);
+    try {
+      const enhancedLookup = getItemWithDiscounts(itemCode);
+      const details = await fetch_item_details(
+        url, prefix, auth.account!.id, itemCode, item?.kit ?? "0", undefined,
+      );
+      if (revision !== scanRevision.current) return refuse();
+      if (!details) return refuse(`Item not found: ${code}`);
+      if (details.quantity_available <= 0) return refuse(`Item is out of stock: ${code}`);
+      const enhancedData = await enhancedLookup;
+      if (revision !== scanRevision.current) return refuse();
+      if (!item && !enhancedData) return refuse(`Couldn't load price for ${code} — please scan again`);
+      const base: InventoryItem = item ?? {
+        stock_id: itemCode,
+        description: enhancedData?.description ?? itemCode,
+        rate: enhancedData?.rate ?? "0",
+        kit: enhancedData?.kit ?? "0",
+        units: enhancedData?.units ?? "",
+        mb_flag: enhancedData?.mb_flag ?? "",
+        branch_name: enhancedData?.branch_name ?? "",
+        pulldown: "",
+        item: itemCode,
+        price: enhancedData?.price ?? details.price.toString(),
+        selling_price: enhancedData?.price ?? details.price.toString(),
+        balance: details.quantity_available.toString(),
+      };
+      addingScannedItem.current = true;
+      try {
+        addItemToCart({
+          __typename: "direct_sales",
+          user: "current_user",
+          max_quantity: 1,
+          // the line carries the label through to checkout, which sells it as its item
+          item: { ...base, stock_id: code },
+          details: {
+            ...details,
+            quantity_available: 1,
+            ...(enhancedData
+              ? { price: enhancedData.has_discount ? enhancedData.discounted_price : parseFloat(enhancedData.price) }
+              : {}),
+          },
+          quantity: 1,
+          discount: "0.00",
+          // null when the item has no price list entry, as for a scanned stock item
+          enhanced_item: enhancedData as DirectSales["enhanced_item"],
+        });
+      } finally {
+        addingScannedItem.current = false;
+      }
+    } catch (lookupError) {
+      console.error("Stock lookup failed:", lookupError);
+      return refuse(`Couldn't check stock for ${code} — please scan again`);
+    }
+    return true;
+  };
+
   const submitScan = () => {
     const code = scanBuffer.current.trim();
     if (!code || !scanQueue.current) return;
@@ -489,6 +589,7 @@ const ItemSearchBox = () => {
         if (!auth.site_url || !auth.site_company || !auth.account) {
           throw new Error("Please sign in before scanning items");
         }
+        if (GRADED_CODE.test(code) && (await addLabel(code, revision, auth))) return;
         // Price and discount are looked up alongside the stock check, not after
         // it, so the live discount lookup adds no wait to the scan.
         const enhancedLookup = getItemWithDiscounts(code);
