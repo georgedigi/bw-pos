@@ -157,10 +157,9 @@ const CartActions = () => {
         event.preventDefault(); // Optional: Prevents the default browser action for F1
       }
       if (event.key === "F8") {
-        handleHoldCart().catch((error) => {
-          console.log("error", error);
-          toast.error("Unable to hold cart");
-        });
+        // Same as the Pause Sale button: an authorised user approves the hold
+        // and picks a reason. F8 used to hold the cart without either.
+        setIsHoldDialogOpen(true);
         event.preventDefault(); // Optional: Prevents the default browser action for F1
       }
       if (event.key === "F9") {
