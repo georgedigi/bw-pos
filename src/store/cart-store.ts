@@ -5,6 +5,7 @@ import { generateRandomString } from "~/lib/utils";
 import { setCart, getCart, deleteCart } from "~/utils/indexeddb";
 import { useAuthStore } from "~/store/auth-store";
 import { release_grading_tag } from "~/lib/actions/inventory.actions";
+import { syncCart } from "~/lib/cart-sync";
 
 interface CartState {
   selectedCartItem: DirectSales | null;
@@ -17,6 +18,7 @@ interface CartState {
   saveCart: () => void;
   clearCart: () => void;
   loadCart: (cart_id: string) => void;
+  restoreCart: (cart: Cart) => void;
   holdCart: () => void;
   setCurrentCustomer: (customer: Customer | null) => void;
   setSelectedCartItem: (item: DirectSales | null) => void;
@@ -108,6 +110,7 @@ export const useCartStore = create<CartState>((set, get) => {
           console.error("Failed to set cart:", error),
         );
         safeLocalStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newCart));
+        syncCart("add", newCart, item);
       } else {
         const existingItemIndex = state.currentCart.items.findIndex(
           (cartItem) =>
@@ -141,6 +144,7 @@ export const useCartStore = create<CartState>((set, get) => {
             console.error("Failed to update cart:", error),
           );
           safeLocalStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCart));
+          syncCart("add", updatedCart, item);
         } else {
           const updatedCart: Cart = {
             ...state.currentCart,
@@ -151,6 +155,7 @@ export const useCartStore = create<CartState>((set, get) => {
             console.error("Failed to update cart:", error),
           );
           safeLocalStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCart));
+          syncCart("add", updatedCart, item);
         }
       }
     },
@@ -185,6 +190,7 @@ export const useCartStore = create<CartState>((set, get) => {
           console.error("Failed to update cart:", error),
         );
         safeLocalStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCart));
+        syncCart("remove", updatedCart, { ...item, quantity: 0 });
       }
     },
 
@@ -204,7 +210,10 @@ export const useCartStore = create<CartState>((set, get) => {
 
       console.log("new_state", new_state);
 
-      set({ currentCart: { ...get().currentCart!, items: new_state } });
+      const before = previous.find((x) => x.item.stock_id === item.item.stock_id);
+      const updatedCart = { ...get().currentCart!, items: new_state };
+      set({ currentCart: updatedCart });
+      syncCart(before && before.quantity !== item.quantity ? "qty" : "discount", updatedCart, item);
     },
 
     saveCart: () => {
@@ -247,6 +256,16 @@ export const useCartStore = create<CartState>((set, get) => {
       loadCartAsync().catch((error) =>
         console.error("Failed to load cart:", error),
       );
+    },
+
+    // A cart the server still has open for this cashier (see cart-sync),
+    // brought back as it was, same id.
+    restoreCart: (cart: Cart) => {
+      set({ currentCart: cart });
+      setCart(cart).catch((error) =>
+        console.error("Failed to set cart:", error),
+      );
+      safeLocalStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cart));
     },
 
     holdCart: () => {
