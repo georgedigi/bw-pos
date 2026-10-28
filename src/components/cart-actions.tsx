@@ -70,6 +70,7 @@ import { sync_invoice } from "~/lib/actions/pay.actions";
 import { Skeleton } from "./ui/skeleton";
 import CartCounter from "./CartCounter";
 import HoldCartDialog from "~/hawk-tuah/components/HoldCartDialog";
+import { fetchOpenCart } from "~/lib/cart-sync";
 
 const CartActions = () => {
   const {
@@ -85,6 +86,7 @@ const CartActions = () => {
     deleteItemFromCart,
     clearCart,
     setCopiedCartItems,
+    restoreCart,
   } = useCartStore((state) => state);
   const { mutate: updateCartMutate } = useUpdateCart();
   const router = useRouter();
@@ -215,6 +217,24 @@ const CartActions = () => {
       handleUpdateCart(currentCart.cart_id, currentCart);
     }
   }, [currentCart]);
+
+  // A till that opens with no cart (cache cleared, other browser, crash) gets
+  // back the cashier's unpaid cart from the server, so scanned pieces are
+  // not lost.
+  useEffect(() => {
+    if (useCartStore.getState().currentCart || !account) return;
+    let cancelled = false;
+    void fetchOpenCart().then((cart) => {
+      if (cancelled || !cart || useCartStore.getState().currentCart) return;
+      restoreCart(cart);
+      toast.info(
+        `Unpaid cart restored: ${cart.items.reduce((n, i) => n + Number(i.quantity), 0)} item(s). Finish the sale or hold it.`,
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [account?.id]);
 
   useEffect(() => {
     if (unsyncedInvoices.length > 0 && navigator.onLine) {
