@@ -67,11 +67,11 @@ export function getMenuList(
                 label: "All Inventory",
                 active: pathname === "/all-inventory",
               },
-              // {
-              //   href: "/inventory/stocktake",
-              //   label: "Stock Take",
-              //   active: pathname === "/inventory/stocktake",
-              // },
+              {
+                href: "/inventory/stocktake",
+                label: "Stock Take Approvals",
+                active: pathname === "/inventory/stocktake",
+              },
             ],
           },
           // {
@@ -190,11 +190,11 @@ export function getMenuList(
               //   label: "All Inventory",
               //   active: pathname === "/all-inventory",
               // },
-              // {
-              //   href: "/inventory/stocktake",
-              //   label: "Stock Take",
-              //   active: pathname === "/inventory/stocktake",
-              // },
+              {
+                href: "/inventory/stocktake",
+                label: "Stock Take Approvals",
+                active: pathname === "/inventory/stocktake",
+              },
             ],
           },
           // {
@@ -314,6 +314,11 @@ export function getMenuList(
               //   label: "All Inventory",
               //   active: pathname === "/all-inventory",
               // },
+              {
+                href: "/inventory/stocktake",
+                label: "Stock Take Approvals",
+                active: pathname === "/inventory/stocktake",
+              },
             ],
           },
         ],
