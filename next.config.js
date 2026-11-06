@@ -18,6 +18,7 @@ const config = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: true,
+  output: "standalone",
 };
 
 const nextConfigFunction = async () => {
