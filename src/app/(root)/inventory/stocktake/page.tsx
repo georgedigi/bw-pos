@@ -29,6 +29,7 @@ import {
   submit_stock_take_approval,
 } from "~/lib/actions/stocktake.actions";
 import { useAuthStore } from "~/store/auth-store";
+import { is_stock_take_approver } from "~/lib/stock-take-role";
 
 const STATUS_META: Record<StockTakeApprovalStatus, { label: string; className: string }> = {
   pending_team_leader: {
@@ -348,7 +349,10 @@ const ymd = (d: Date) => {
 
 const StockTakeApprovalsPage = () => {
   const { site_company, account, site_url } = useAuthStore();
-  const ready = !!(site_company && account && site_url);
+  // Read after mount: localStorage isn't available during server render.
+  const [allowed, set_allowed] = React.useState<boolean | null>(null);
+  React.useEffect(() => set_allowed(is_stock_take_approver(localStorage.getItem("roles"))), []);
+  const ready = !!(site_company && account && site_url) && allowed === true;
   const [tab, set_tab] = React.useState<"approvals" | "mine">("approvals");
   const [sdate, set_sdate] = React.useState(() => ymd(new Date(Date.now() - 6 * 86400000)));
   const [edate, set_edate] = React.useState(() => ymd(new Date()));
@@ -368,6 +372,22 @@ const StockTakeApprovalsPage = () => {
   });
 
   const active = tab === "approvals" ? approvals : mine;
+  const branch_name = account?.default_store_name?.trim() || account?.default_store || "your branch";
+
+  if (allowed === false) {
+    return (
+      <DashboardLayout title={site_company?.branch ?? ""}>
+        <main className="flex flex-1 items-center justify-center">
+          <div className="rounded-lg border border-dashed p-8 text-center">
+            <h3 className="font-semibold">Team leaders only</h3>
+            <p className="text-sm text-muted-foreground">
+              Stock take approvals are only for the branch team leader. Ask an admin to give you the team leader role.
+            </p>
+          </div>
+        </main>
+      </DashboardLayout>
+    );
+  }
   const waiting = approvals.data?.length ?? 0;
 
   return (
@@ -377,7 +397,7 @@ const StockTakeApprovalsPage = () => {
           <div>
             <h1 className="text-lg font-semibold md:text-2xl">Stock Take Approvals</h1>
             <p className="text-sm text-muted-foreground">
-              Team leaders approve stock takes counted at their branch. Finance gives the final approval in the ERP.
+              Stock takes counted at {branch_name}. You approve first; finance gives the final approval in the ERP.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => active.refetch()} disabled={active.isFetching}>
@@ -410,7 +430,7 @@ const StockTakeApprovalsPage = () => {
               isLoading={approvals.isLoading}
               error={approvals.error}
               empty_title="Nothing to approve"
-              empty_text="No stock takes are waiting for your approval. Only the team leader of a branch sees its stock takes here."
+              empty_text={`No ${branch_name} stock takes are waiting for your approval.`}
             />
           </TabsContent>
           <TabsContent value="mine" className="mt-4">
@@ -420,7 +440,7 @@ const StockTakeApprovalsPage = () => {
               isLoading={mine.isLoading}
               error={mine.error}
               empty_title="No stock takes"
-              empty_text="You haven't submitted any stock takes in this date range."
+              empty_text={`You haven't submitted any ${branch_name} stock takes in this date range.`}
             />
           </TabsContent>
         </Tabs>

@@ -32,8 +32,19 @@ export function getMenuList(
   pathname: string,
   isBranchManager: boolean | undefined,
   isAdmin: boolean | undefined,
-  isInventoryManager: boolean | undefined
+  isInventoryManager: boolean | undefined,
+  isStockTakeApprover: boolean | undefined = false
 ): Group[] {
+  // Only branch team leaders (STOCK_TAKE_APPROVER_ROLE) get the approvals screen.
+  const stockTakeApprovals: Submenu[] = isStockTakeApprover
+    ? [
+        {
+          href: "/inventory/stocktake",
+          label: "Stock Take Approvals",
+          active: pathname === "/inventory/stocktake",
+        },
+      ]
+    : [];
   if (isAdmin) {
     return [
       {
@@ -67,11 +78,7 @@ export function getMenuList(
                 label: "All Inventory",
                 active: pathname === "/all-inventory",
               },
-              {
-                href: "/inventory/stocktake",
-                label: "Stock Take Approvals",
-                active: pathname === "/inventory/stocktake",
-              },
+              ...stockTakeApprovals,
             ],
           },
           // {
@@ -190,11 +197,7 @@ export function getMenuList(
               //   label: "All Inventory",
               //   active: pathname === "/all-inventory",
               // },
-              {
-                href: "/inventory/stocktake",
-                label: "Stock Take Approvals",
-                active: pathname === "/inventory/stocktake",
-              },
+              ...stockTakeApprovals,
             ],
           },
           // {
@@ -314,11 +317,7 @@ export function getMenuList(
               //   label: "All Inventory",
               //   active: pathname === "/all-inventory",
               // },
-              {
-                href: "/inventory/stocktake",
-                label: "Stock Take Approvals",
-                active: pathname === "/inventory/stocktake",
-              },
+              ...stockTakeApprovals,
             ],
           },
         ],

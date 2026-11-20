@@ -16,6 +16,7 @@ import {
   TooltipProvider,
 } from "~/components/ui/tooltip";
 import { getMenuList } from "~/lib/menu-list";
+import { is_stock_take_approver } from "~/lib/stock-take-role";
 import { CollapseMenuButton } from "./collapse-menu-button";
 import { useAuthStore } from "~/store/auth-store";
 import { deleteMetadata } from "~/utils/indexeddb";
@@ -116,7 +117,13 @@ export default function Menu({ isOpen }: MenuProps) {
       form.current.reset();
     }
   };
-  const menuList = getMenuList(pathname, bManager, admin, inventoryManager);
+  const menuList = getMenuList(
+    pathname,
+    bManager,
+    admin,
+    inventoryManager,
+    is_stock_take_approver(roles),
+  );
 
   const handleHoldCart = async (systemReason?: typeof SYSTEM_HOLD_REASONS[keyof typeof SYSTEM_HOLD_REASONS]) => {
     if (!currentCart) {

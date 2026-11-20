@@ -1,6 +1,7 @@
 // Stock take approvals: the branch team leader approves or rejects stock
 // takes counted in the mobile app. Finance gives the final approval in the
 // ERP. Backend contract: dairy-module-master docs/stock-take-approvals-backend.md
+// and this repo's docs/stock-take-team-leader-backend.md (branch scoping + role).
 
 import axios from "axios";
 
@@ -57,6 +58,17 @@ export const STOCK_TAKE_TYPES = [
   "General Stock Take Activity",
 ];
 
+/**
+ * Keep only stock takes counted at the user's own branch (their
+ * default_store). The backend filters by `branch_code` too; this guards
+ * against a backend that still returns every branch.
+ */
+export function only_my_branch(list: StockTakeEntry[], account: UserAccountInfo): StockTakeEntry[] {
+  const branch = account.default_store?.trim();
+  if (!branch) return [];
+  return list.filter((e) => (e.branch_code?.trim() || e.location?.trim()) === branch);
+}
+
 export function stock_take_status(e: StockTakeEntry): StockTakeApprovalStatus {
   if (e.approval_status) return e.approval_status;
   return e.approved === "1" ? "finance_approved" : "pending_team_leader";
@@ -76,12 +88,13 @@ export async function fetch_stock_takes_for_approval(
   form.append("cp", site_company.company_prefix);
   form.append("id", account.id);
   form.append("scope", "my_approvals");
+  form.append("branch_code", account.default_store ?? "");
 
   const res = await axios.postForm<StockTakeEntry[]>(
     `${site_url}process.php`,
     form,
   );
-  return Array.isArray(res.data) ? res.data : [];
+  return only_my_branch(Array.isArray(res.data) ? res.data : [], account);
 }
 
 /**
@@ -101,12 +114,13 @@ export async function fetch_my_stock_takes(
   form.append("id", account.id);
   form.append("sdate", sdate);
   form.append("edate", edate);
+  form.append("branch_code", account.default_store ?? "");
 
   const res = await axios.postForm<StockTakeEntry[]>(
     `${site_url}process.php`,
     form,
   );
-  return Array.isArray(res.data) ? res.data : [];
+  return only_my_branch(Array.isArray(res.data) ? res.data : [], account);
 }
 
 export type ApprovalResult =
