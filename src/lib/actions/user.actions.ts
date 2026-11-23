@@ -62,6 +62,8 @@ interface LoginUser {
   password: string;
   selected_company: string;
   ip: string;
+  /** Sign out this session (from a SESSION_LIMIT_REACHED refusal) and sign in here. */
+  replace_session_id?: string;
 }
 
 export type AuthorizationResponse = {
@@ -69,31 +71,132 @@ export type AuthorizationResponse = {
   message: "Authorized" | "Not Authorized";
 };
 
-export const signIn = async (userData: LoginUser) => {
-  try {
-    console.log("userData", userData);
+/** One session holding a sign-in slot (ERP docs/mobile-sign-in-limits.md). */
+export type ActiveSession = {
+  session_id: string;
+  channel: string;
+  device_name: string | null;
+  platform: string | null;
+  browser: string | null;
+  user_name: string | null;
+  can_end: boolean;
+};
 
+export type SignInResult =
+  | { success: true; data: UserAccountInfo }
+  | {
+      success: false;
+      message: string;
+      /** INVALID_CREDENTIALS, TOO_MANY_ATTEMPTS, SESSION_LIMIT_REACHED, ... */
+      reason?: string;
+      active_sessions?: ActiveSession[];
+    };
+
+const DEVICE_ID_KEY = "pos_device_id";
+
+/** One id per browser, kept so signing in again on this till takes no new slot. */
+function pos_device_id(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id =
+        "pos_" +
+        (typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID().replace(/-/g, "")
+          : Date.now().toString(36) + Math.random().toString(36).slice(2, 14));
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    return "pos_" + Math.random().toString(36).slice(2, 14);
+  }
+}
+
+/** "Chrome on Windows" from the user agent. */
+function pos_device_name(): string {
+  if (typeof navigator === "undefined") return "POS";
+  const ua = navigator.userAgent;
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /OPR\//.test(ua)
+      ? "Opera"
+      : /Firefox\//.test(ua)
+        ? "Firefox"
+        : /Chrome\//.test(ua)
+          ? "Chrome"
+          : /Safari\//.test(ua)
+            ? "Safari"
+            : "Browser";
+  const os = /Windows/.test(ua)
+    ? "Windows"
+    : /Android/.test(ua)
+      ? "Android"
+      : /iPhone|iPad/.test(ua)
+        ? "iOS"
+        : /Mac OS X/.test(ua)
+          ? "Mac"
+          : /Linux/.test(ua)
+            ? "Linux"
+            : "";
+  return `POS - ${browser}${os ? ` on ${os}` : ""}`;
+}
+
+/** The server's own words from a refusal body (`message`, older replies `error`). */
+function refusal(data: unknown, status?: number): SignInResult {
+  if (data === false) return { success: false, message: "Incorrect user name or password." };
+  if (data && typeof data === "object") {
+    const d = data as Record<string, any>;
+    const message = typeof d.message === "string" && d.message.trim() !== ""
+      ? d.message.trim()
+      : typeof d.error === "string" && d.error.trim() !== ""
+        ? d.error.trim()
+        : null;
+    const code = d.error_code ?? d.code;
+    if (code === "SESSION_LIMIT_REACHED") {
+      return {
+        success: false,
+        reason: "SESSION_LIMIT_REACHED",
+        message: message ?? "This account is already signed in on another device.",
+        active_sessions: Array.isArray(d.data?.active_sessions) ? d.data.active_sessions : [],
+      };
+    }
+    if (message) return { success: false, message, reason: typeof d.reason === "string" ? d.reason : undefined };
+  }
+  return {
+    success: false,
+    message: status ? `Server error (${status}). Please try again.` : "Unexpected response from the server. Please try again.",
+  };
+}
+
+export const signIn = async (userData: LoginUser): Promise<SignInResult> => {
+  try {
     const form_data = new FormData();
     form_data.append("tp", "login");
     form_data.append("un", userData.username);
     form_data.append("up", userData.password);
     form_data.append("cp", userData.selected_company);
     form_data.append("ip_address", userData.ip);
+    // Needed when the company limits how many devices can be signed in.
+    form_data.append("device_id", pos_device_id());
+    form_data.append("device_name", pos_device_name());
+    form_data.append("platform", "Web");
+    if (userData.replace_session_id) form_data.append("replace_session_id", userData.replace_session_id);
 
-    const response = await axios.postForm<UserAccountInfo>(
+    const response = await axios.postForm<UserAccountInfo | Record<string, unknown> | false>(
       `${userData.company_url}process.php`,
       form_data
     );
-
-    // Check response data for unauthorized access
-    if (response.data && response.data.status === "FAILED") {
-      return { success: false, message: response.data.message };
+    const data = response.data as any;
+    if (data && typeof data === "object" && "id" in data && data.success !== false && data.status !== "FAILED") {
+      return { success: true, data: data as UserAccountInfo };
     }
-
-    // Return successful data
-    return { success: true, data: response.data };
+    return refusal(data);
   } catch (error) {
     console.error("Error", error);
+    if (axios.isAxiosError(error)) {
+      if (error.response) return refusal(error.response.data, error.response.status);
+      return { success: false, message: "Cannot reach the server. Check the internet connection and try again." };
+    }
     return { success: false, message: "An error occurred. Please try again." };
   }
 };

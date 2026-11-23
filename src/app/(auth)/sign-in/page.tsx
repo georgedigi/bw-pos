@@ -23,6 +23,7 @@ import {
   fetch_sites,
   signIn,
   fetch_user_roles,
+  type ActiveSession,
 } from "~/lib/actions/user.actions";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -47,6 +48,8 @@ const SignIn = () => {
     null,
   );
   const [isLoading, setIsLoading] = useState(false);
+  // Sign-in refused at the limit: the sessions holding the slot, and why.
+  const [limitRefusal, setLimitRefusal] = useState<{ message: string; sessions: ActiveSession[] } | null>(null);
 
   const [userIp, setUserIp] = useState<string | null>(null);
 
@@ -131,30 +134,10 @@ const SignIn = () => {
   };
 
 
-  interface LoginSuccessResponse {
-    success: boolean;
-    data: UserAccountInfo;
-  }
 
-  interface LoginSuccessResponse {
-    success: boolean;
-    data: UserAccountInfo;
-  }
-
-  interface LoginFailedCredentialsResponse {
-    success: boolean;
-    data: false;
-  }
-
-  interface LoginUnauthorizedResponse {
-    success: false;
-    message: string;
-  }
-
-  type LoginResponse = LoginSuccessResponse | LoginFailedCredentialsResponse | LoginUnauthorizedResponse;
-
-  const onSubmit = async (data: z.infer<typeof formSchema>) => {
+  const onSubmit = async (data: z.infer<typeof formSchema>, replace_session_id?: string) => {
     setIsLoading(true);
+    setLimitRefusal(null);
     try {
       const company_information: SiteInfo[] | null = await fetch_site_info(
         data.site_name ?? ""
@@ -177,41 +160,18 @@ const SignIn = () => {
         password: data.password,
         selected_company: selectedCompany?.company_prefix ?? "",
         ip: userIp || "",
-      }) as LoginResponse;
+        replace_session_id,
+      });
 
       console.log("Login result:", login_result);
 
-      // Check if login_result exists
-      if (!login_result) {
-        toast.error("Login failed: No response from server");
-        return;
-      }
-
-      // Check for unauthorized access first
-      if (!login_result.success && 'message' in login_result) {
+      if (!login_result.success) {
+        // The server's own words: wrong password names the company, too many
+        // attempts / deactivated / sign-in limit each say so.
         toast.error(login_result.message);
-        return;
-      }
-
-      // Check for invalid credentials
-      if ('data' in login_result && login_result.data === false) {
-        toast.error("Invalid username or password");
-        return;
-      }
-
-      // Type guard for successful login
-      const isSuccessfulLogin = (
-        response: LoginResponse
-      ): response is LoginSuccessResponse => {
-        return response.success &&
-          'data' in response &&
-          response.data !== false &&
-          typeof response.data === 'object';
-      };
-
-      // Check login result
-      if (!isSuccessfulLogin(login_result)) {
-        toast.error("Login failed. Please try again.");
+        if (login_result.reason === "SESSION_LIMIT_REACHED") {
+          setLimitRefusal({ message: login_result.message, sessions: login_result.active_sessions ?? [] });
+        }
         return;
       }
 
@@ -317,7 +277,7 @@ const SignIn = () => {
           <div className="grid gap-4">
             <Form {...form}>
               <form
-                onSubmit={form.handleSubmit(onSubmit)}
+                onSubmit={form.handleSubmit((d) => onSubmit(d))}
                 className="space-y-4"
               >
                 <CustomInput
@@ -347,6 +307,32 @@ const SignIn = () => {
                   data={siteInfo}
                   setSelected={setSelectedCompany}
                 />
+
+                {limitRefusal ? (
+                  <div className="rounded-md border border-destructive p-3 text-sm">
+                    <p className="mb-2 font-medium text-destructive">{limitRefusal.message}</p>
+                    {limitRefusal.sessions.map((s) => (
+                      <div key={s.session_id} className="flex items-center justify-between gap-2 py-1">
+                        <span>
+                          {s.device_name || s.browser || s.platform || "Unknown device"} (
+                          {s.channel === "erp" ? "ERP" : "app"}
+                          {s.user_name ? `, ${s.user_name}` : ""})
+                        </span>
+                        {s.can_end ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isLoading}
+                            onClick={() => void onSubmit(form.getValues(), s.session_id)}
+                          >
+                            Sign out there, sign in here
+                          </Button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 <>
                   <Button type="submit" disabled={isLoading} className="w-full">
