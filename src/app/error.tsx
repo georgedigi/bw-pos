@@ -1,6 +1,6 @@
 'use client';
 
-import { ErrorComponent } from '~/hawk-tuah/ErrorBoundary';
+import { ErrorComponent } from '~/hawk-tuah/ErrorBoundary'
 
 export default function GlobalError({
     error,
