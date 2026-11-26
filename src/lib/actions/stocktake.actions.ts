@@ -31,7 +31,10 @@ export type StockTakeEntry = {
   branch_code?: string;
   branch_name?: string;
   approved?: string;
+  /** Numeric id of the stock take intent (e.g. "6"). */
   stock_take_type: string;
+  /** Display name for the type, e.g. "Retention". Preferred over the id. */
+  stock_take_type_name?: string;
   approval_status?: StockTakeApprovalStatus;
   team_leader_approved_by?: string;
   team_leader_name?: string;
@@ -48,7 +51,10 @@ export type StockTakeEntry = {
   can_team_leader_approve?: boolean;
 };
 
-/** Same order as the mobile app's stock take intents (stock_take_type). */
+/**
+ * Fallback names, indexed by the mobile app's stock take intent id
+ * (stock_take_type). Used only when the backend sends no stock_take_type_name.
+ */
 export const STOCK_TAKE_TYPES = [
   "Production Verification",
   "Branch Receiving",
@@ -56,7 +62,25 @@ export const STOCK_TAKE_TYPES = [
   "Branch Clearance",
   "HQ Returns",
   "General Stock Take Activity",
+  "Retain Stock",
 ];
+
+/** Name to show for a stock take's type: backend name first, then the id. */
+export function stock_take_type_label(e: Pick<StockTakeEntry, "stock_take_type" | "stock_take_type_name">): string {
+  const name = e.stock_take_type_name?.trim();
+  if (name) return name;
+  return STOCK_TAKE_TYPES[parseInt(e.stock_take_type)] ?? "Stock take";
+}
+
+/**
+ * Only stock retention needs team leader approval: any type whose name
+ * contains "retain" or "retention" (e.g. "Retain Stock").
+ */
+export function needs_team_leader_approval(
+  e: Pick<StockTakeEntry, "stock_take_type" | "stock_take_type_name">,
+): boolean {
+  return /retain|retention/i.test(stock_take_type_label(e));
+}
 
 /**
  * Keep only stock takes counted at the user's own branch (their
@@ -94,7 +118,9 @@ export async function fetch_stock_takes_for_approval(
     `${site_url}process.php`,
     form,
   );
-  return only_my_branch(Array.isArray(res.data) ? res.data : [], account);
+  return only_my_branch(Array.isArray(res.data) ? res.data : [], account).filter(
+    needs_team_leader_approval,
+  );
 }
 
 /**

@@ -20,11 +20,12 @@ import { Input } from "~/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { cn } from "~/lib/utils";
 import {
-  STOCK_TAKE_TYPES,
+  stock_take_type_label,
   StockTakeApprovalStatus,
   StockTakeEntry,
   fetch_my_stock_takes,
   fetch_stock_takes_for_approval,
+  needs_team_leader_approval,
   stock_take_status,
   submit_stock_take_approval,
 } from "~/lib/actions/stocktake.actions";
@@ -59,7 +60,6 @@ function StatusBadge({ entry }: { entry: StockTakeEntry }) {
   );
 }
 
-const type_name = (t: string) => STOCK_TAKE_TYPES[parseInt(t)] ?? "Stock take";
 const who_when = (name?: string, date?: string) =>
   [name, date].filter((x) => x && x.trim() !== "").join(" · ");
 
@@ -137,7 +137,7 @@ function StockTakeDetail({
 
   React.useEffect(() => set_comment(""), [entry.stock_take_id]);
 
-  const can_act = entry.can_team_leader_approve === true;
+  const can_act = entry.can_team_leader_approve === true && needs_team_leader_approval(entry);
 
   const submit = async (action: "approve" | "reject") => {
     if (!site_company || !account || !site_url) return;
@@ -180,7 +180,7 @@ function StockTakeDetail({
             {entry.branch_name?.trim() || entry.store_name?.trim()} · #{entry.stock_take_id}
           </CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">
-            {type_name(entry.stock_take_type)} · counted {entry.trans_date}
+            {stock_take_type_label(entry)} · counted {entry.trans_date}
             {entry.confirmation_id ? ` · ${entry.confirmation_id}` : ""}
           </p>
         </div>
@@ -331,7 +331,7 @@ function StockTakeBrowser({
               <StatusBadge entry={e} />
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {type_name(e.stock_take_type)} · {e.trans_date} · {e.items.length}{" "}
+              {stock_take_type_label(e)} · {e.trans_date} · {e.items.length}{" "}
               {e.items.length === 1 ? "item" : "items"}
             </p>
           </button>
