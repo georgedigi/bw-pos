@@ -1,6 +1,7 @@
 "use client";
 import AdminPanelLayout from "~/components/admin-panel-layout";
 import UpdateAvailableBanner from "~/components/update-available-banner";
+import ErrorReporter from "~/components/error-reporter";
 import useAuth from "~/hooks/use-auth";
 import { useAuthStore } from "~/store/auth-store";
 import { useRouter } from "next/navigation";
@@ -23,6 +24,7 @@ export default function MainLayout({
     <AdminPanelLayout>
       {children}
       <UpdateAvailableBanner />
+      <ErrorReporter />
     </AdminPanelLayout>
   );
 }
