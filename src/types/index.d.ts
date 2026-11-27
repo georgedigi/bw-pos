@@ -63,6 +63,8 @@ declare type UserAccountInfo = {
   tho_sep: string;
   transaction_days: string;
   use_date_picker: string;
+  /** Bearer token from a v2 ERP's login reply (absent on v1 sites). */
+  token?: string;
   message?: string;
   status?: string;
 };
